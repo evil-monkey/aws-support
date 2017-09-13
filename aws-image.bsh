@@ -1,0 +1,80 @@
+#!/bin/bash
+
+function print_help() {
+    
+    echo "usage: $(basename $0) [--help]
+        [-s=source] [-r=repo] [-i=image] [-t=tag]
+
+    Genera una version especifica (tag) de una imagen.
+
+    Parametros
+    ==========
+
+    -i, --image               Image: nombre de la imagen
+
+    -s, --source              Source: directorio donde se encuentra el dockerfile
+ 
+    -t, --tag                 Tag: Tag de la imagen. 
+                              default: latest
+
+    -r, --repo                Repo: Docker repo
+    "
+
+}
+
+
+SOURCE=.
+TAG=latest
+
+#parameters
+for i in "$@"
+do
+    case $i in
+        -r=*|--repo=*)
+            REPO="${i#*=}"
+            shift # past argument=value
+        ;;
+        -s=*|--source=*)
+            SOURCE="${i#*=}"
+            shift # past argument=value
+        ;;
+        -i=*|--image=*)
+            IMAGE="${i#*=}"
+            shift # past argument=value
+        ;;
+        -t=*|--tag=*)
+            TAG="${i#*=}"
+            shift # past argument=value
+        ;;
+        --help|*)
+            print_help
+	    exit 0
+        ;;
+    esac
+done
+
+cd $SOURCE
+
+echo "Taggeando con $TAG"
+
+AWS='/home/gitlab-runner/.local/bin/aws'
+$AWS --version
+
+login=$($AWS ecr get-login)
+
+login="${login/\-e\ none/}"
+
+eval $login
+
+echo "Build image..."
+
+docker build -t $IMAGE:$TAG .
+
+echo "Tag image..."
+
+docker tag $IMAGE:$TAG $REPO/$IMAGE:$TAG
+
+echo "Push image..."
+
+docker push $REPO/$IMAGE:$TAG
+

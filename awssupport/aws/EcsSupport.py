@@ -58,6 +58,51 @@ class EcsSupport():
         return error
 
     
+    def get_task_info(self,cluster,service):
+
+        self.log.info(self.version())
+
+        service_describe_command = '%s ecs describe-services --services %s --cluster %s' % (self.aws_bin,service,cluster) 
+        self.log.info(service_describe_command)
+        output, error = self.run_cmd(service_describe_command)
+        if not error:
+	          service_description = json.loads(output)
+	          task_definition = service_description['services'][0]['taskDefinition']
+	          task_family, task_revision = task_definition.split(':')[-2:]
+	          task_family = task_family.split('/')[-1:][0]
+	          return (task_family,task_revision)
+        else:
+            print "ERROR: error al intentar obtener la descripcion del servicio: %s".format(error)
+            raise Exception(error)
+    
+    
+    def get_container_info(self,task_family,task_revision,container):
+
+        self.log.info(self.version())
+
+        task_describe_command = '%s ecs describe-task-definition --task-definition %s:%s' % (self.aws_bin,task_family,task_revision) 
+        self.log.info(task_describe_command)
+        output, error = self.run_cmd(task_describe_command)
+        if not error:
+	          (image_name,image_tag) = (None,None)
+	          task_description = json.loads(output)
+	          containers = task_description['taskDefinition']['containerDefinitions']
+	          containerDefinition = None
+	          index = len(containers) - 1
+	          
+	          while( not containerDefinition and  index > -1):
+	              if containers[index]['name'] == container:
+	                  containerDefinition = containers[index]
+	              index-=1
+	          
+	          if containerDefinition:
+	              (image_name,image_tag) = containerDefinition['image'].split(':')
+
+	          return (image_name,image_tag)
+        else:
+            print "ERROR: error al intentar obtener la task definition: %s".format(error)
+            raise Exception(error)
+    
     def deploy(self,cluster,service,tag):
 
         self.log.info(self.version())
