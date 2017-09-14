@@ -5,6 +5,8 @@ Created on 09/12/2017
 
 '''
 
+import os
+import uuid
 import json
 import exceptions
 import subprocess
@@ -30,6 +32,7 @@ class EcsSupport():
             raise ValueError('No se encuentra el ejecutable de awscli: %s' % aws_bin)
         
         self.aws_bin = aws_bin
+        self.log.info(self.version())
 
     
     def run_cmd(self,cmd):
@@ -40,9 +43,10 @@ class EcsSupport():
     	      self.log.debug('\nRunning command: %s\noutput: %s\nerror: %s\n' % (cmd,output,error)) 
     	      return output, error
         except exceptions.OSError as (errno, strerror):
-            print "OSError({0}): {1}".format(errno, strerror)
+            self.log.error("OSError({0}): {1}".format(errno, strerror))
+            raise
         except:
-            print "ERROR:", sys.exc_info()   
+            self.log.error("ERROR:", sys.exc_info())   
             raise
 
     
@@ -60,8 +64,6 @@ class EcsSupport():
     
     def get_task_info(self,cluster,service):
 
-        self.log.info(self.version())
-
         service_describe_command = '%s ecs describe-services --services %s --cluster %s' % (self.aws_bin,service,cluster) 
         self.log.info(service_describe_command)
         output, error = self.run_cmd(service_describe_command)
@@ -72,13 +74,11 @@ class EcsSupport():
 	          task_family = task_family.split('/')[-1:][0]
 	          return (task_family,task_revision)
         else:
-            print "ERROR: error al intentar obtener la descripcion del servicio: %s".format(error)
+            self.log.error("ERROR: error al intentar obtener la descripcion del servicio: %s" % error)
             raise Exception(error)
     
     
     def get_container_info(self,task_family,task_revision,container):
-
-        self.log.info(self.version())
 
         task_describe_command = '%s ecs describe-task-definition --task-definition %s:%s' % (self.aws_bin,task_family,task_revision) 
         self.log.info(task_describe_command)
@@ -98,27 +98,59 @@ class EcsSupport():
 	          if containerDefinition:
 	              (image_name,image_tag) = containerDefinition['image'].split(':')
 
-	          return (image_name,image_tag)
+	          return (image_name,image_tag,containers)
         else:
-            print "ERROR: error al intentar obtener la task definition: %s".format(error)
+            self.log.error("ERROR: error al intentar obtener la task definition: %s" % error)
+            raise Exception(error)
+   
+
+    def create_task_revision(self,from_family, containers, containers_map):
+
+        for container in containers:
+            self.log.debug('Actualizando container %s...' % container['name'])
+            if container['name'] in containers_map:
+                image_parts = container['image'].split(':')
+                image_parts[-1] = containers_map[container['name']]
+                container['image'] = ":".join(image_parts)
+                self.log.debug('... nueva imagen para %s: %s' % (container['name'],container['image']))
+
+        #print containers
+        tempfile = '/tmp/%s.json' % str(uuid.uuid4())
+        container_definitions = { "containerDefinitions": containers }
+        self.log.debug("Nueva definicion de containers: %s" % json.dumps(container_definitions))
+
+        with open(tempfile, 'w') as outfile:
+            json.dump(container_definitions, outfile)
+
+        self.log.debug('New container definitions for task %s: %s' % (from_family,container_definitions))
+
+        register_task_command = "%s ecs register-task-definition --family %s --cli-input-json file://%s" % (self.aws_bin,from_family,tempfile) 
+        
+        self.log.info(register_task_command)
+        output, error = self.run_cmd(register_task_command)
+        os.remove(tempfile)
+
+        if not error:
+	          result = json.loads(output)
+	          task_definition_arn = result['taskDefinition']['taskDefinitionArn']
+	          task_revision = task_definition_arn.split(':')[-1]
+	          return str(task_revision)
+        else:
+            self.log.error("ERROR: error al intentar comprobar la version del cliente de AWS: %s" % error)
             raise Exception(error)
     
-    def deploy(self,cluster,service,tag):
 
-        self.log.info(self.version())
-        print('\nDesplegando:\n\tcluster=%s,\n\tservice=%s,\n\ttag=%s\n' % (cluster,service,tag)) 
+    def update_service(self,cluster,service,task_family,task_revision):
 
-        service_describe_command = '%s ecs describe-services --services %s --cluster %s' % (self.aws_bin,service,cluster) 
-        print service_describe_command
-        output, error = self.run_cmd(service_describe_command)
+        service_update_command = '%s ecs update-service --cluster %s --service %s --task-definition %s:%s' % (self.aws_bin,cluster,service,task_family,task_revision) 
+        self.log.info(service_update_command)
+        output, error = self.run_cmd(service_update_command)
         if not error:
 	          service_description = json.loads(output)
-	          task_definition = service_description['services'][0]['taskDefinition']
-	          task_family, task_revision = task_definition.split(':')[-2:]
-	          task_family = task_family.split('/')[-1:][0]
-	          print 'Actualmente el servicio %s utiliza la task definition: %s:%s' % (service, task_family, task_revision)
+	          task_definition = service_description['service']['taskDefinition']
+	          service_name = service_description['service']['serviceName']
+
+	          return (service_name, task_definition)
         else:
-            print "ERROR: error al intentar comprobar la version del cliente de AWS: %s".format(error)
+            self.log.error("ERROR: error al intentar obtener la task definition: %s" % error)
             raise Exception(error)
-
-

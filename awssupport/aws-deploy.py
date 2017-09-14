@@ -91,20 +91,30 @@ def main(argv):
     ecsSupport = EcsSupport(log_level)
     
     try:
+        #get task info
         (task_family,task_revision) = ecsSupport.get_task_info(cluster,service)
         print 'Actualmente el servicio %s utiliza la task definition: %s:%s' % (service, task_family, task_revision)
-        (image_name,image_tag) = ecsSupport.get_container_info(task_family,task_revision,container)
+
+        #get container info
+        (image_name,image_tag,containers) = ecsSupport.get_container_info(task_family,task_revision,container)
         if not image_name or not image_tag:
             print ('\nERROR: No se puede obtener la imagen utilizada actualmente para el container %s!' % container)
             sys.exit(2)
 
         print 'Actualmente el container %s utiliza la imagen: %s:%s' % (container, image_name, image_tag)
-        
+       
         if dry :
             print('\nWARN: Dry run, no se ejecutaran cambios! El deploy reemplazaria la imagen %s:%s por la %s:%s para el container %s en la task definition %s en el servicio %s del cluster %s\n' % (image_name,image_tag,image_name,tag,container,task_family,service,cluster))
             sys.exit(0)
-
         
+        #create new task revision
+        new_task_revision = ecsSupport.create_task_revision(task_family, containers, { container: tag })
+        print 'Se creo la revision %s para la task definition %s.' %  (new_task_revision,task_family)
+       
+        #update service w/new revision
+        (updated_service,service_task_definition) = ecsSupport.update_service(cluster,service,task_family,new_task_revision)
+
+        print 'Se actualizo el servicio %s con la task definition %s.' % (updated_service,service_task_definition)
 
     except ValueError as (msg):
         print "ERROR: %s" % msg
